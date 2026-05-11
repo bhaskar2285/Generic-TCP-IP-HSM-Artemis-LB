@@ -96,16 +96,21 @@ DUR=15 TPS_LADDER="500 1000 2000 3000" CMD=mix bash bench-hsm-commands-5go-eznet
 
 ## Performance
 
-Tested on Ubuntu 24.04, 5 HSM nodes, 5 EZNet instances, 2 LB instances:
+All benchmarks: Ubuntu 24.04, persistent TCP connection pool (20 conns/port), 5 Go EZNet instances, `CMD=mix` (8 payShield commands, uniform random).
 
-| TPS | Pass Rate | p95 Latency |
-|-----|-----------|-------------|
-| 500 | 100% | ~200ms |
-| 1000 | 100% | ~3s |
-| 2000 | 100% | ~10s |
-| 3000 | 99%+ | ~15s |
+### 2 HSM nodes · 4 LB instances · logging ON
 
-Ceiling is HSM node count. Each additional HSM node adds ~400–500 TPS capacity.
+| Target TPS | Sent | Pass Rate | ActTPS | Avg | p95 |
+|------------|------|-----------|--------|-----|-----|
+| 500 | 149,993 | **100%** | 498 | 7ms | 13ms |
+| 1000 | 300,021 | **100%** | 993 | 44ms | 729ms |
+
+### Scaling notes
+
+- 2 HSM nodes sustain ~1000 TPS at 100% pass rate
+- Each additional HSM node adds ~400–500 TPS sustained capacity
+- 5 HSM nodes: tested ceiling 3000 TPS (99%+ pass rate)
+- Logging (payload + DEBUG) has negligible impact at ≤1000 TPS; disable in production above that
 
 See `docs/PRODUCTION_DEPLOYMENT.txt` for full production sizing and tuning guide.
 
