@@ -62,7 +62,7 @@ hsm.lb.pool.max-total=20
 hsm.lb.pool.socket-timeout-ms=10000
 ```
 
-EZNet is configured via command-line flags — see `go-eznet/main.go` or `docs/PRODUCTION_DEPLOYMENT.txt`.
+Go EZNet is configured via `docker/config/go-eznet-N/eznet.conf` (one file per instance). These map directly to the command-line flags passed in `docker-compose.yml`. See `go-eznet/main.go` for full flag reference or `docs/PRODUCTION_DEPLOYMENT.txt` for production tuning.
 
 ## Supported HSM Commands
 
@@ -114,7 +114,8 @@ See `docs/PRODUCTION_DEPLOYMENT.txt` for full production sizing and tuning guide
 ```
 docker/
   artemis/          Broker cluster configuration
-  config/lb-N/      Per-instance LB application.properties
+  config/lb-N/          Per-instance LB application.properties
+  config/go-eznet-N/    Per-instance EZNet eznet.conf
   hsm-sim/          Go HSM simulator source
   docker-compose.yml
 go-eznet/           Go TCP-AMQP bridge source
