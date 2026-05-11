@@ -1,0 +1,257 @@
+HSM Transparent Load Balancer — Production Deployment Guide
+============================================================
+Version: 1.0  |  Stack: ActiveMQ Artemis + Spring Boot LB + Go EZNet + Thales payShield
+
+
+OVERVIEW
+--------
+This stack provides transparent TCP load balancing for Thales payShield HSMs.
+Client applications connect to Go EZNet instances over plain TCP (payShield protocol).
+EZNet bridges TCP to AMQP, Artemis brokers route messages, Spring Boot LBs forward
+to real HSM nodes over TCP and return responses through the same path.
+
+Request flow:
+  Client TCP  ->  Go EZNet (TCP-to-AMQP)  ->  Artemis Cluster  ->  Spring Boot LB  ->  HSM
+
+
+COMPONENTS
+----------
+1. ActiveMQ Artemis 2.38+  (2 nodes, active-active cluster)
+2. Spring Boot LB          (2-4 instances, stateless)
+3. Go EZNet                (1 per client-facing port, 5 recommended)
+4. Thales payShield HSMs   (physical or simulator)
+
+
+HARDWARE / OS REQUIREMENTS
+---------------------------
+Minimum per node (2000 TPS, 5 HSMs):
+  CPU  : 8 cores (Artemis + LBs + EZNets compete for CPU)
+  RAM  : 16 GB   (Artemis needs 3-4 GB heap; leave headroom)
+  Disk : 50 GB SSD for Artemis journal (NVMe preferred)
+  OS   : Ubuntu 22.04+ or RHEL 8+, kernel 5.15+
+
+Open file limit:
+  Set in /etc/security/limits.conf or systemd unit:
+    * soft nofile 65535
+    * hard nofile 65535
+
+
+ARTEMIS CLUSTER SETUP
+---------------------
+Both brokers run active-active with OFF load balancing (no message redistribution).
+Each broker owns its own journal — no shared storage needed.
+
+Key settings in broker.xml (both nodes):
+  <message-load-balancing>OFF</message-load-balancing>
+  <message-expiry-scan-period>5000</message-expiry-scan-period>
+
+  HSM inbound queues expire at 60s:
+  <address-setting match="hsm-transparent-lb-inbound-#">
+    <expiry-delay>60000</expiry-delay>
+  </address-setting>
+
+CRITICAL — broker affinity rule:
+  With OFF load balancing, reply messages CANNOT cross brokers.
+  All Go EZNet instances MUST connect to the same broker as the LBs that serve them.
+  Default setup: all EZNets pin to artemis-master; all LBs connect to master first.
+  If you add LBs on artemis-slave, add dedicated EZNet instances pinned to slave too.
+
+JVM heap (per broker):
+  ARTEMIS_EXTRA_JAVA_ARGS="-Xms3g -Xmx3g -XX:+UseG1GC"
+  Container/cgroup memory limit: at least 4 GB
+
+Artemis does NOT return heap to OS after peak load (G1GC by design).
+Size heap for your expected peak, not average.
+
+Artemis queue pre-declaration:
+  All queues used by EZNets and LBs must be declared in broker.xml <addresses> section
+  on BOTH brokers. See docker/artemis/broker-master.xml for reference list.
+
+
+SPRING BOOT LB SETUP
+--------------------
+One instance per LB node. Each instance gets a unique hsm.lb.instance-id.
+
+Critical application.properties settings:
+
+  # Artemis connection — randomize=false for broker affinity
+  spring.activemq.broker-url=failover:(tcp://BROKER1:61616,tcp://BROKER2:61616)\
+    ?jms.prefetchPolicy.queuePrefetch=10\
+    &initialReconnectDelay=100\
+    &maxReconnectDelay=10000\
+    &maxReconnectAttempts=-1\
+    &randomize=false
+
+  # JMS consumers — tune to HSM count x expected concurrency
+  hsm.lb.jms.concurrent-consumers=400
+  hsm.lb.jms.max-concurrent-consumers=600
+
+  # Socket pool per HSM node
+  hsm.lb.pool.max-total=20
+  hsm.lb.pool.socket-timeout-ms=10000
+  hsm.lb.pool.fast-fail-timeout-ms=2000   # try next node fast if one fails
+
+  # HSM nodes (host:port:weight)
+  hsm.lb.nodes=node1:HSM1_IP:9000:1,node2:HSM2_IP:9000:1,...
+
+  # Circuit breaker — enable in production
+  hsm.lb.circuit-breaker.enabled=true
+
+  # Payload logging — disable in production (high volume)
+  hsm.lb.payload.log-enabled=false
+  logging.level.com.isc.hsm.transparentlb=INFO
+
+  # Log rotation
+  logging.file.name=/var/log/hsm-lb/app.log
+  logging.logback.rollingpolicy.max-file-size=100MB
+  logging.logback.rollingpolicy.max-history=30
+
+Health check endpoint:  GET http://LB_HOST:8110/actuator/health
+Metrics endpoint:       GET http://LB_HOST:8110/actuator/prometheus
+
+
+GO EZNET SETUP
+--------------
+One process per client-facing TCP port.
+
+Command line flags:
+  -port        int     TCP listen port (default 9110)
+  -broker      string  Primary AMQP broker  e.g. amqp://artemis-master:5672
+  -broker2     string  Failover AMQP broker e.g. amqp://artemis-slave:5672
+  -self-queue  string  Unique reply queue for this instance e.g. hsm-transparent-lb-inbound-go-1
+  -outbound-q  string  Inbound queue LBs consume from (hsm.transparent.lb.in)
+  -max-conn    int     Max TCP connections (default 1000)
+  -log-file    string  Log file path (stdout if omitted)
+  -metrics-port int   Prometheus metrics port (default 9100)
+
+Example (5 instances):
+  go-eznet -port 9110 -broker amqp://broker1:5672 -broker2 amqp://broker2:5672 \
+    -self-queue hsm-transparent-lb-inbound-go-1 -outbound-q hsm.transparent.lb.in \
+    -log-file /var/log/hsm-eznet/go-eznet-1.log
+
+  go-eznet -port 9111 ... -self-queue hsm-transparent-lb-inbound-go-2 ...
+  (repeat for go-3 through go-5)
+
+CRITICAL: Each EZNet instance must have a unique -self-queue value.
+This queue must be pre-declared on the Artemis broker it connects to.
+
+Log fields to monitor in production:
+  REQ   corrID=... cmd=... req_bytes=... pending=...
+  REPLY corrID=... cmd=... total_ms=... enqueue_ms=... queue_wait_ms=...
+  SLOW  corrID=... total_ms > 1000ms  (investigate if frequent)
+  TIMEOUT corrID=... (investigate immediately if rate > 0.1%)
+
+
+CLIENT APPLICATION SETUP
+------------------------
+Clients connect directly to Go EZNet TCP ports using standard payShield protocol.
+No protocol changes needed. EZNet is fully transparent at the wire level.
+
+Load balance clients across available EZNet ports:
+  - Round-robin DNS or hardware LB pointing to ports 9110-9114
+  - Or embed port list in client app config
+
+Recommended client settings:
+  - Use persistent TCP connections (not new connection per request)
+  - Connection pool: 10-20 connections per EZNet port
+  - Request timeout: 30-45 seconds (HSM operations under load can take 10-20s)
+  - Reconnect on disconnect with exponential backoff
+
+
+SCALING GUIDELINES
+------------------
+TPS capacity is primarily limited by:
+  1. Number of HSM nodes (each adds ~400-500 TPS capacity)
+  2. Artemis broker CPU (Artemis is the bottleneck above 2000 TPS on single broker)
+  3. LB instance count (each LB adds consumer threads)
+
+Tested capacities (5 HSM nodes, 5 EZNet, 2 LBs, active-active Artemis):
+  Safe operating zone  : 1000-1500 TPS  (p95 < 3s)
+  Ceiling (99% pass)   : 3000 TPS       (persistent client connections required)
+  Hard limit           : ~3500 TPS      (HSM sim CPU saturates)
+
+To increase capacity:
+  - Add HSM nodes first (biggest gain per node up to ~5)
+  - Add LB instances (increase consumer threads)
+  - Add Artemis broker nodes (requires config change for >2 brokers)
+  - Add EZNet instances (only needed if >5000 concurrent clients)
+
+
+THAI LOTTERY SPIKE HANDLING (50 -> 1500 TPS)
+---------------------------------------------
+The stack handles sudden spikes without pre-warming because:
+  - Go EZNet connection pool accepts connections immediately
+  - Artemis queues buffer requests during spike onset
+  - LBs drain the queue burst as HSMs process at maximum rate
+
+Observed behaviour during 50->1500 TPS spike:
+  - Queue depth spikes to ~2000 messages in first 5-10 seconds
+  - p99 latency rises to 10-20s during spike absorption
+  - Returns to <3s p95 within 30-60 seconds
+  - 0% message loss if spike duration < queue expiry (60s TTL)
+
+Pre-spike preparation:
+  - Ensure all HSM nodes healthy (circuit breakers reset)
+  - Ensure Artemis heap not at peak from prior load
+  - Monitor queue depth via Artemis console or Prometheus
+
+
+MONITORING
+----------
+Prometheus scrape targets:
+  - Spring Boot LBs:    http://LB_HOST:8110/actuator/prometheus
+  - Go EZNet:           http://EZNET_HOST:9100/metrics
+  - Artemis (JMX):      via jmx_prometheus_javaagent on port 9404
+
+Key metrics to alert on:
+  hsm.lb.requests{result="error"}         — node errors (alert if rate > 1%)
+  hsm.lb.requests{result="exhausted"}     — all nodes failed (alert on any)
+  hsm.lb.request.duration{p95}            — end-to-end latency
+  artemis queue depth (hsm.transparent.lb.in) — alert if > 5000 messages
+  JVM heap used (artemis)                 — alert if > 80% of -Xmx
+
+
+OPERATIONAL RUNBOOK
+-------------------
+Circuit breaker reset (after HSM node recovery):
+  curl -X POST http://LB_HOST:8110/api/v1/hsm-lb/nodes/NODE_ID/circuit-reset
+
+Node enable/disable (rolling HSM maintenance):
+  curl -X POST http://LB_HOST:8110/api/v1/hsm-lb/nodes/NODE_ID/disable
+  curl -X POST http://LB_HOST:8110/api/v1/hsm-lb/nodes/NODE_ID/enable
+
+Artemis manual failback (after master OOM crash):
+  1. Stop artemis-slave
+  2. Restart artemis-master — it reclaims the lock
+  3. Restart artemis-slave — it reconnects as peer
+  4. Restart LBs to re-establish JMS sessions
+
+Queue depth check:
+  curl http://ARTEMIS_HOST:8161/console/jolokia/read/\
+    org.apache.activemq.artemis:broker="BROKER",component=addresses,address="hsm.transparent.lb.in",\
+    subcomponent=queues,routing-type="anycast",queue="hsm.transparent.lb.in"/MessageCount
+
+Log locations:
+  LB logs:     /var/log/hsm-lb/app.log       (rolling, 100MB files, 30 days)
+  EZNet logs:  /var/log/hsm-eznet/go-eznet-N.log
+  Artemis:     /var/lib/artemis-instance/log/artemis.log
+
+
+SECURITY NOTES
+--------------
+  - Artemis security-enabled=false assumes network-level isolation (internal VLAN)
+  - Enable Artemis JAAS authentication for production if broker is on shared network
+  - LB application.properties credentials are blank by default — set if Artemis auth enabled
+  - EZNet AMQP connection has no auth by default — align with Artemis config
+  - HSM node connections are plain TCP — use dedicated HSM management VLAN
+  - Payload logging (hsm.lb.payload.log-enabled) logs raw HSM data — keep disabled in production
+    Enable only for short-duration debugging sessions
+
+
+KNOWN LIMITATIONS
+-----------------
+  1. Artemis master does not auto-failback after OOM crash — manual intervention required
+  2. With OFF load balancing, EZNet and LB instances must share same broker (see broker affinity rule)
+  3. JVM heap does not shrink after peak — size for peak load from start
+  4. Circuit breaker state is in-memory — resets on LB restart
+  5. No message deduplication — if client retries after timeout, HSM may process twice
