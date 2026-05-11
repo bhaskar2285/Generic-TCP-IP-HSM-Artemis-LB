@@ -10,3 +10,4 @@ target/
 ${sys:LOG_PATH}/
 logs/
 docs/internal/
+go-eznet/go-eznet

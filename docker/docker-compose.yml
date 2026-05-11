@@ -351,7 +351,7 @@ services:
   # Host ports 9110-9114 (TCP) + 8130-8134 (metrics) to coexist with Java EZNets.
   go-eznet-1:
     build:
-      context: ../../../../go-eznet
+      context: ../go-eznet
       dockerfile: Dockerfile
     image: go-eznet:latest
     container_name: go-eznet-1
