@@ -109,17 +109,50 @@ Ceiling is HSM node count. Each additional HSM node adds ~400–500 TPS capacity
 
 See `docs/PRODUCTION_DEPLOYMENT.txt` for full production sizing and tuning guide.
 
+## Monitoring
+
+Prometheus + Grafana dashboards cover all components — LB request rates, latency, Artemis queue depth, EZNet throughput, host CPU/mem.
+
+**Docker-based** (Prometheus + Grafana in containers):
+```bash
+cd deploy/monitoring/docker
+docker compose -f docker-compose.monitoring.yml up -d
+# Edit prometheus.yml — replace ARTEMIS_MASTER / ARTEMIS_SLAVE with real IPs
+```
+
+**Bare-metal** (systemd services):
+```bash
+sudo bash deploy/monitoring/prometheus-bare/install.sh
+# Edit /etc/prometheus/prometheus.yml — replace placeholder hostnames
+```
+
+**Artemis JMX agent** (required for broker metrics, both modes):
+```bash
+sudo bash deploy/monitoring/jmx-artemis-install.sh
+# Then add -javaagent line to Artemis JVM args and restart brokers
+```
+
+Grafana: http://HOST:3000 (admin/admin — change on first login)
+Prometheus: http://HOST:9090
+
 ## Project Structure
 
 ```
 docker/
-  artemis/          Broker cluster configuration
-  config/lb-N/          Per-instance LB application.properties
-  config/go-eznet-N/    Per-instance EZNet eznet.conf
-  hsm-sim/          Go HSM simulator source
+  artemis/                  Broker cluster configuration
+  config/lb-N/              Per-instance LB application.properties
+  config/go-eznet-N/        Per-instance EZNet eznet.conf
+  hsm-sim/                  Go HSM simulator source
   docker-compose.yml
-go-eznet/           Go TCP-AMQP bridge source
-src/                Spring Boot LB source (Java)
-tests/              Benchmark scripts
-docs/               Deployment and operations documentation
+go-eznet/                   Go TCP-AMQP bridge source
+src/                        Spring Boot LB source (Java)
+tests/                      Benchmark scripts
+docs/                       Deployment and operations documentation
+deploy/
+  deploy.sh                 Bare-metal deploy script
+  supervisor/               Supervisor units for LB + Go EZNet
+  monitoring/docker/        Docker-based Prometheus + Grafana stack
+  monitoring/prometheus-bare/ Bare-metal Prometheus + Grafana install
+  monitoring/jmx-artemis-install.sh  JMX agent for Artemis metrics
+deploy-java-eznet-legacy/   Previous Java EZNet deployment (reference)
 ```
