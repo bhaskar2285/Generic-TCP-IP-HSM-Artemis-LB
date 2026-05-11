@@ -1,0 +1,43 @@
+# Prometheus scrape config — bare-metal production
+# Replace ARTEMIS_MASTER, ARTEMIS_SLAVE, LB_HOST, EZNET_HOST with real IPs/hostnames
+# Deploy to: /etc/prometheus/prometheus.yml
+
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+
+  # Spring Boot LB instances
+  - job_name: hsm-lb
+    static_configs:
+      - targets:
+          - LB_HOST:8110
+          - LB_HOST:8111
+    metrics_path: /actuator/prometheus
+
+  # Artemis brokers via JMX agent (port 9404 on each broker host)
+  - job_name: artemis
+    static_configs:
+      - targets:
+          - ARTEMIS_MASTER:9404
+          - ARTEMIS_SLAVE:9404
+
+  # Go EZNet instances
+  - job_name: go-eznet
+    static_configs:
+      - targets:
+          - EZNET_HOST:8130
+          - EZNET_HOST:8131
+          - EZNET_HOST:8132
+          - EZNET_HOST:8133
+          - EZNET_HOST:8134
+    metrics_path: /metrics
+
+  # Node exporter — host OS metrics (optional, install node_exporter separately)
+  - job_name: node
+    static_configs:
+      - targets:
+          - LB_HOST:9100
+          - ARTEMIS_MASTER:9100
+          - ARTEMIS_SLAVE:9100
