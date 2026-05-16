@@ -205,10 +205,12 @@ func (b *Bridge) amqpSession(ctx context.Context) error {
 	defer sender.Close(ctx)
 
 	// Receiver ← self queue (responses arrive here).
-	// Artemis FQQN: forces anycast so JMS LB can send reply to this queue.
+	// FQQN forces anycast addressing; SourceCapabilities "queue" tells Artemis
+	// to create/bind the address as ANYCAST so JMS senders can deliver to it.
 	inFQQN := b.cfg.SelfQueue + "::" + b.cfg.SelfQueue
 	receiver, err := sess.NewReceiver(ctx, inFQQN, &amqp.ReceiverOptions{
-		Credit: 200,
+		Credit:             200,
+		SourceCapabilities: []string{"queue"},
 	})
 	if err != nil {
 		return fmt.Errorf("new receiver: %w", err)

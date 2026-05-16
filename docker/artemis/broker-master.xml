@@ -84,6 +84,17 @@
       <address name="hsm-transparent-lb-inbound-go-8"><anycast><queue name="hsm-transparent-lb-inbound-go-8"/></anycast></address>
       <address name="hsm-transparent-lb-inbound-go-9"><anycast><queue name="hsm-transparent-lb-inbound-go-9"/></anycast></address>
       <address name="hsm-transparent-lb-inbound-go-10"><anycast><queue name="hsm-transparent-lb-inbound-go-10"/></anycast></address>
+      <!-- Xenticate ATM/POS channel queues -->
+      <address name="xenticate.atm.inbound"><anycast><queue name="xenticate.atm.inbound"/></anycast></address>
+      <address name="xenticate.atm.response.1"><anycast><queue name="xenticate.atm.response.1"/></anycast></address>
+      <address name="xenticate.atm.response.2"><anycast><queue name="xenticate.atm.response.2"/></anycast></address>
+      <address name="xenticate.pos.inbound"><anycast><queue name="xenticate.pos.inbound"/></anycast></address>
+      <address name="xenticate.pos.response.1"><anycast><queue name="xenticate.pos.response.1"/></anycast></address>
+      <address name="xenticate.pos.response.2"><anycast><queue name="xenticate.pos.response.2"/></anycast></address>
+      <!-- Xenticate scheme egress queues -->
+      <address name="xenticate.visa.out"><anycast><queue name="xenticate.visa.out"/></anycast></address>
+      <address name="xenticate.mastercard.out"><anycast><queue name="xenticate.mastercard.out"/></anycast></address>
+      <address name="xenticate.itmx-iso.out"><anycast><queue name="xenticate.itmx-iso.out"/></anycast></address>
     </addresses>
   </core>
 </configuration>
