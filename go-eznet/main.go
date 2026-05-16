@@ -17,6 +17,7 @@ import (
 
 	"github.com/Azure/go-amqp"
 	"github.com/google/uuid"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // Config holds all runtime parameters, mirroring application.properties fields.
@@ -364,11 +365,12 @@ func main() {
 	flag.Parse()
 
 	if *logFile != "" {
-		f, err := os.OpenFile(*logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Fatalf("open log file %s: %v", *logFile, err)
-		}
-		log.SetOutput(f)
+		log.SetOutput(&lumberjack.Logger{
+			Filename:   *logFile,
+			MaxSize:    100, // MB before rotation
+			MaxBackups: 5,   // keep 5 rotated files
+			Compress:   true,
+		})
 	}
 
 	cfg := Config{
